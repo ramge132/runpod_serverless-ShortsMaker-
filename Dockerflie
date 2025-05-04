@@ -1,0 +1,18 @@
+# 사전 빌드된 ComfyUI 이미지 사용 (체크포인트, 텍스트 인코더, VAE 포함)
+FROM timpietruskyblibla/runpod-worker-comfy:3.4.0-flux1-dev
+
+# 파이썬 출력 버퍼링 비활성화
+ENV PYTHONUNBUFFERED=1
+
+# 작업 디렉토리 설정 (작업 파일들을 이곳에 복사 및 실행)
+WORKDIR /workspace
+
+# 커스텀 실행 스크립트와 RunPod 핸들러 복사
+COPY start.sh /workspace/start.sh
+COPY rp_handler.py /workspace/rp_handler.py
+
+# start.sh 실행 권한 부여
+RUN chmod +x /workspace/start.sh
+
+# start.sh를 컨테이너의 진입점으로 지정
+ENTRYPOINT ["/workspace/start.sh"]
