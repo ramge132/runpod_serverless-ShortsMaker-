@@ -3,7 +3,7 @@ from huggingface_hub import snapshot_download, login
 
 # --- Hugging Face 로그인 (토큰 직접 사용) ---
 # 사용자 요청에 따라 HF 토큰을 코드에 직접 포함합니다.
-hf_token = "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"
+hf_token = "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"
 print("Logging in to Hugging Face Hub with provided token...")
 login(token=hf_token)
 print("Login successful.")
