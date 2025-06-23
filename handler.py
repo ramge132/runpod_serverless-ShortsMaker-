@@ -100,7 +100,6 @@
 # # RunPod 핸들러 시작
 # runpod.serverless.start({"handler": handler})
 
-
 import runpod
 import torch
 from diffusers import FluxPipeline
@@ -118,7 +117,7 @@ print("Worker starting up...")
 try:
     # 1. 모델 로드
     print("Loading FLUX model...")
-    model_path = "weights"
+    model_path = "weights/flux1_dev" # 다운로드 경로와 일치시킴
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Model directory not found at {model_path}")
 
