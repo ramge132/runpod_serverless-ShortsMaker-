@@ -1,0 +1,7 @@
+runpod
+torch
+diffusers
+transformers
+huggingface_hub
+boto3
+accelerate
