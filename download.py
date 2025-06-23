@@ -1,13 +1,10 @@
 import os
 from huggingface_hub import snapshot_download, login
 
-# --- Hugging Face 로그인 ---
-# RunPod의 환경 변수에서 HF_TOKEN을 읽음
-hf_token = os.environ.get("HF_TOKEN")
-if not hf_token:
-    raise ValueError("Hugging Face Token not found in environment variables. Please set HF_TOKEN.")
-
-print("Logging in to Hugging Face Hub...")
+# --- Hugging Face 로그인 (토큰 직접 사용) ---
+# 사용자 요청에 따라 HF 토큰을 코드에 직접 포함합니다.
+hf_token = "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"
+print("Logging in to Hugging Face Hub with provided token...")
 login(token=hf_token)
 print("Login successful.")
 
