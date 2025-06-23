@@ -1,5 +1,5 @@
-# 베이스 이미지 선택
-FROM runpod/pytorch:2.1.0-py3.10-cuda12.1.1-devel
+# 베이스 이미지 선택 
+FROM runpod/pytorch:2.2.2-py3.11-cuda12.1.1-devel
 
 # apt-get이 사용자 입력을 기다리지 않도록 설정
 ENV DEBIAN_FRONTEND=noninteractive
