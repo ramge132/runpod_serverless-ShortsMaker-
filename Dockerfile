@@ -1,4 +1,4 @@
-# 베이스 이미지 선택 
+# 베이스 이미지 선택 (PyTorch 공식 이미지로 변경하여 안정성 확보)
 FROM pytorch/pytorch:2.2.2-cuda12.1-cudnn8-runtime
 
 # apt-get이 사용자 입력을 기다리지 않도록 설정
@@ -24,8 +24,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 나머지 소스 코드 복사
 COPY . .
 
-# 모델 다운로드 스크립트 실행
-RUN python download.py
+# 모델 다운로드 스크립트 실행 -> 이 단계는 handler.py의 시작 부분으로 이동합니다.
+# RUN python download.py
 
 # 컨테이너 실행 시 핸들러 스크립트 실행
 CMD ["python", "-u", "handler.py"]
