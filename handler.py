@@ -104,7 +104,7 @@
 import runpod
 import torch
 from diffusers import FluxPipeline
-from nunchaku import NunchakuFluxTransformer2DModel # Nunchaku 전용 트랜스포머 임포트
+from nunchaku import NunchakuFluxTransformer2dModel # Nunchaku 전용 트랜스포머 임포트 (2d로 수정)
 import os
 import io
 import traceback
@@ -157,7 +157,7 @@ try:
 
     # --- 3. Nunchaku를 사용하여 파이프라인 구성 ---
     logging.info("Loading Nunchaku transformer...")
-    transformer = NunchakuFluxTransformer2DModel.from_pretrained(nunchaku_transformer_path)
+    transformer = NunchakuFluxTransformer2dModel.from_pretrained(nunchaku_transformer_path) # 2d로 수정
 
     logging.info("Loading base pipeline and injecting Nunchaku transformer...")
     pipe = FluxPipeline.from_pretrained(
