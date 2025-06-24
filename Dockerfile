@@ -1,37 +1,41 @@
-# 베이스 이미지 선택 (PyTorch 공식 이미지로 변경하여 안정성 확보)
-FROM pytorch/pytorch:2.2.2-cuda12.1-cudnn8-runtime
+# 1. CUDA12.4 + cuDNN8 런타임 + Ubuntu22.04
+FROM nvidia/cuda:12.4.1-cudnn8-runtime-ubuntu22.04
 
-# apt-get이 사용자 입력을 기다리지 않도록 설정
-ENV DEBIAN_FRONTEND=noninteractive
-
-# 시스템 패키지 업데이트 및 필수 라이브러리 설치
-# -y 플래그와 --no-install-recommends를 추가하여 안정성 향상
+# 2. Python 3.11 설치 (deadsnakes PPA)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git \
-    libgl1-mesa-glx \
-    libglib2.0-0 \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+      software-properties-common \
+    && add-apt-repository ppa:deadsnakes/ppa \
+    && apt-get update \
+    && apt-get install -y python3.11 python3.11-venv python3.11-dev git \
+    && ln -sf /usr/bin/python3.11 /usr/bin/python \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# 작업 디렉토리 설정
 WORKDIR /app
 
-# requirements.txt 먼저 복사하여 Docker 캐시를 효율적으로 사용
-COPY requirements.txt .
+# 3. 의존성 리스트와 다운로드 스크립트 먼저 복사
+COPY requirements.txt download.py ./
 
-# PyTorch 및 xFormers 등 핵심 라이브러리를 호환되는 버전으로 한 번에 설치
-RUN pip install --no-cache-dir \
-    torch==2.2.2 torchvision==0.17.2 torchaudio==2.2.2 xformers \
-    --index-url https://download.pytorch.org/whl/cu121
+# 4. 빌드 시 HF_TOKEN 전달받도록
+ARG HF_TOKEN
+ENV HF_TOKEN=${HF_TOKEN}
 
-# 나머지 순수 Python 패키지 설치
-RUN pip install --no-cache-dir -r requirements.txt
+# 5. 가상환경 생성 및 의존성 설치
+RUN python -m venv venv \
+ && . venv/bin/activate \
+ && pip install --upgrade pip \
+ && pip install --no-cache-dir \
+      torch==2.6.0+cu124 \
+      torchvision==0.21.0+cu124 \
+      torchaudio==2.6.2+cu124 \
+    -f https://download.pytorch.org/whl/cu124/torch_stable.html \
+ && pip install --no-cache-dir -r requirements.txt
 
-# 나머지 소스 코드 복사
+# 6. 모델 웨이트 다운로드
+RUN . venv/bin/activate && python download.py
+
+# 7. 나머지 소스 복사
 COPY . .
 
-# 모델 다운로드 스크립트 실행 -> 이 단계는 handler.py의 시작 부분으로 이동합니다.
-# RUN python download.py
-
-# 컨테이너 실행 시 핸들러 스크립트 실행
-CMD ["python", "-u", "handler.py"]
+# 8. 핸들러 실행
+ENV PATH="/app/venv/bin:$PATH"
+CMD ["python", "handler.py"]
