@@ -187,7 +187,7 @@ def handler(job):
             text_encoder=text_encoder, text_encoder_2=text_encoder_2, tokenizer=tokenizer, tokenizer_2=tokenizer_2,
             transformer=None, vae=None, scheduler=None
         )
-        prompt_embeds, pooled_prompt_embeds = temp_pipe.encode_prompt(prompt=prompt)
+        prompt_embeds, pooled_prompt_embeds = temp_pipe.encode_prompt(prompt=prompt, prompt_2=prompt)
         
         # 메모리 해제
         del text_encoder, text_encoder_2, tokenizer, tokenizer_2, temp_pipe
