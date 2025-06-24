@@ -13,7 +13,7 @@ RUN apt-get update \
  && add-apt-repository ppa:deadsnakes/ppa -y \
  && apt-get update \
  && apt-get install -y --no-install-recommends \
-      python3.11 python3.11-venv python3.11-dev git \
+      python3.11 python3.11-venv python3.11-dev git curl \
  && ln -sf /usr/bin/python3.11 /usr/bin/python \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/*

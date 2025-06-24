@@ -9,6 +9,8 @@ import base64
 from huggingface_hub import snapshot_download, login
 import logging
 import gc
+import subprocess
+import uuid
 
 # --- 로깅 설정 ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -99,21 +101,29 @@ def handler(job):
                 generator=generator
             ).images[0]
         
-        logging.info("Encoding image to Base64...")
-        buffer = io.BytesIO()
-        image.save(buffer, format="PNG")
-        img_bytes = buffer.getvalue()
-        base64_encoded_image = base64.b64encode(img_bytes).decode('utf-8')
+        logging.info("Image generated. Uploading to transfer.sh...")
         
-        # --- Base64 문자열 전체를 로그에 출력 ---
-        logging.info("Generated Base64 string:")
-        print(base64_encoded_image) # print를 사용하여 다른 로그와 분리
+        # 이미지를 임시 파일로 저장
+        temp_filename = f"/tmp/{uuid.uuid4()}.png"
+        image.save(temp_filename)
         
-        logging.info("Image encoded successfully.")
+        # curl을 사용하여 transfer.sh에 업로드
+        upload_command = ["curl", "--upload-file", temp_filename, f"https://transfer.sh/{os.path.basename(temp_filename)}"]
+        result = subprocess.run(upload_command, capture_output=True, text=True)
         
-        return {
-            "status": "Completed successfully. The full Base64 string has been printed to the logs."
-        }
+        # 임시 파일 삭제
+        os.remove(temp_filename)
+        
+        if result.returncode == 0:
+            image_url = result.stdout.strip()
+            logging.info(f"Image uploaded successfully: {image_url}")
+            return {
+                "image_url": image_url,
+                "image_prompt": prompt
+            }
+        else:
+            logging.error(f"Failed to upload image: {result.stderr}")
+            return {"error": "Failed to upload image to transfer.sh", "details": result.stderr}
 
     except Exception as e:
         logging.error(f"Error during handling job: {e}", exc_info=True)
