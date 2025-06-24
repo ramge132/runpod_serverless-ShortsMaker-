@@ -160,11 +160,10 @@ try:
     # 2. CPU 오프로딩 활성화 (VRAM 대폭 절약)
     pipe.enable_model_cpu_offload()
     
-    # 3. xFormers 활성화 (어텐션 연산 최적화)
-    pipe.enable_xformers_memory_efficient_attention()
-    
-    # 4. 어텐션 슬라이싱 활성화 (VRAM 피크 사용량 감소)
+    # 3. 어텐션 슬라이싱 활성화 (VRAM 피크 사용량 감소)
     pipe.enable_attention_slicing()
+    
+    # xFormers는 FLUX 파이프라인과 호환성 문제가 있으므로 제거합니다.
 
     logging.info("Pipeline loaded and optimized successfully.")
 
