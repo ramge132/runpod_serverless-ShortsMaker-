@@ -1,5 +1,5 @@
 runpod
-torch
+# torch # Dockerfile에서 직접 설치하므로 제거
 diffusers
 transformers
 huggingface_hub
