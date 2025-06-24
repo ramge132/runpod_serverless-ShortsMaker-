@@ -99,12 +99,9 @@
 
 # # RunPod 핸들러 시작
 # runpod.serverless.start({"handler": handler})
-
 import runpod
 import torch
-from diffusers import FluxPipeline, AutoencoderKL, FluxTransformer2DModel
-from diffusers.image_processor import VaeImageProcessor
-from transformers import T5EncoderModel, CLIPTextModel, CLIPTokenizer, T5TokenizerFast
+from diffusers import FluxPipeline
 import os
 import io
 import traceback
@@ -112,6 +109,7 @@ import base64
 from huggingface_hub import snapshot_download, login
 import logging
 import gc
+import nunchaku # Nunchaku 라이브러리 임포트
 
 # --- 메모리 단편화 방지 (스크립트 최상단) ---
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128"
@@ -119,22 +117,15 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128"
 # --- 로깅 설정 ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# --- 전역 변수 및 헬퍼 함수 ---
+# --- 전역 변수 및 초기화 ---
 initialization_error = None
+pipe = None
 model_path = "weights/flux1_dev"
 DTYPE = torch.float16
 
-def flush():
-    """GPU 메모리를 정리하는 헬퍼 함수"""
-    logging.info("Flushing GPU cache...")
-    gc.collect()
-    torch.cuda.empty_cache()
-    torch.cuda.synchronize()
-    logging.info("Flush complete.")
-
-# --- 초기화: 모델 다운로드만 실행 ---
 logging.info("Worker starting up...")
 try:
+    # --- 1. 모델 다운로드 ---
     if not os.path.exists(model_path):
         logging.info(f"Model not found at {model_path}. Downloading...")
         hf_token = os.environ.get("HF_TOKEN")
@@ -150,8 +141,24 @@ try:
         logging.info("Model downloaded successfully.")
     else:
         logging.info("Model already exists, skipping download.")
+
+    # --- 2. Nunchaku를 사용하여 파이프라인 로드 및 래핑 ---
+    logging.info("Loading FLUX model pipeline for Nunchaku...")
+    
+    # 파이프라인을 CPU에 float16으로 로드
+    pipe = FluxPipeline.from_pretrained(
+        model_path, 
+        torch_dtype=DTYPE
+    )
+    
+    # Nunchaku로 파이프라인을 래핑하여 자동 메모리 관리 활성화
+    logging.info("Wrapping pipeline with Nunchaku...")
+    pipe = nunchaku.wrap(pipe)
+    
+    logging.info("Pipeline loaded and wrapped with Nunchaku successfully.")
+
 except Exception as e:
-    initialization_error = f"Initialization failed during download: {e}"
+    initialization_error = f"Initialization failed: {e}"
     logging.error(initialization_error, exc_info=True)
 
 # ------------------------------------
@@ -169,69 +176,33 @@ def create_prompt(input_data):
 def handler(job):
     if initialization_error:
         return {"error": initialization_error}
+    
+    if not pipe:
+        return {"error": "Worker is not properly initialized. Check the logs for details."}
 
     try:
         job_input = job['input']
         prompt = create_prompt(job_input)
         logging.info(f"Generated Prompt: {prompt}")
-
-        # --- 1단계: 프롬프트 인코딩 ---
-        logging.info("Stage 1: Encoding prompt...")
-        text_encoder = CLIPTextModel.from_pretrained(model_path, subfolder="text_encoder", torch_dtype=DTYPE).to("cuda")
-        text_encoder_2 = T5EncoderModel.from_pretrained(model_path, subfolder="text_encoder_2", torch_dtype=DTYPE).to("cuda")
-        tokenizer = CLIPTokenizer.from_pretrained(model_path, subfolder="tokenizer")
-        tokenizer_2 = T5TokenizerFast.from_pretrained(model_path, subfolder="tokenizer_2")
         
-        temp_pipe = FluxPipeline(
-            text_encoder=text_encoder, text_encoder_2=text_encoder_2, tokenizer=tokenizer, tokenizer_2=tokenizer_2,
-            transformer=None, vae=None, scheduler=None
-        )
-        prompt_embeds, pooled_prompt_embeds, _ = temp_pipe.encode_prompt(prompt=prompt, prompt_2=prompt)
+        # Nunchaku가 래핑한 파이프라인을 직접 호출
+        # 내부적으로 필요한 모듈만 GPU로 이동시켜 실행됨
+        with torch.no_grad():
+            generator = torch.Generator().manual_seed(job_input.get('seed', 42))
+            image = pipe(
+                prompt=prompt, 
+                prompt_2=prompt,
+                num_inference_steps=28,
+                guidance_scale=7.0,
+                generator=generator
+            ).images[0]
         
-        del text_encoder, text_encoder_2, tokenizer, tokenizer_2, temp_pipe
-        flush()
-        logging.info("Stage 1 complete. Text encoders flushed.")
-
-        # --- 2단계: 디노이징 (Latent 생성) ---
-        logging.info("Stage 2: Denoising to generate latents...")
-        # 올바른 클래스를 사용하여 transformer만 로드
-        transformer = FluxTransformer2DModel.from_pretrained(model_path, subfolder="transformer", torch_dtype=DTYPE).to("cuda")
-        scheduler = FluxPipeline.from_pretrained(model_path, subfolder="scheduler").scheduler
-        
-        temp_pipe_2 = FluxPipeline(
-            transformer=transformer, scheduler=scheduler,
-            text_encoder=None, text_encoder_2=None, tokenizer=None, tokenizer_2=None, vae=None
-        )
-        
-        latents = temp_pipe_2(
-            prompt_embeds=prompt_embeds,
-            pooled_prompt_embeds=pooled_prompt_embeds,
-            num_inference_steps=28,
-            guidance_scale=7.0,
-            output_type="latent"
-        ).images
-        
-        del transformer, scheduler, temp_pipe_2
-        flush()
-        logging.info("Stage 2 complete. Transformer flushed.")
-
-        # --- 3단계: VAE 디코딩 (Latent -> 이미지) ---
-        logging.info("Stage 3: Decoding latents to image...")
-        vae = AutoencoderKL.from_pretrained(model_path, subfolder="vae", torch_dtype=DTYPE).to("cuda")
-        
-        latents = latents / vae.config.scaling_factor
-        image = vae.decode(latents, return_dict=False)[0]
-        
-        del vae
-        flush()
-        logging.info("Stage 3 complete. VAE flushed.")
-
-        # --- 최종 처리 ---
         logging.info("Encoding image to Base64...")
         buffer = io.BytesIO()
         image.save(buffer, format="PNG")
         img_bytes = buffer.getvalue()
         base64_encoded_image = base64.b64encode(img_bytes).decode('utf-8')
+        
         logging.info("Image encoded successfully.")
         
         return {
@@ -241,6 +212,9 @@ def handler(job):
 
     except Exception as e:
         logging.error(f"Error during handling job: {e}", exc_info=True)
+        # 에러 발생 후 메모리 정리
+        gc.collect()
+        torch.cuda.empty_cache()
         return {"error": f"Job failed: {e}", "trace": traceback.format_exc()}
 
 # RunPod 핸들러 시작

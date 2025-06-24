@@ -7,4 +7,5 @@ huggingface_hub
 accelerate
 protobuf
 sentencepiece
-# xformers # Dockerfile에서 직접 설치하므로 제거
+# xformers # Nunchaku와 충돌 가능성이 있으므로 제거
+nunchaku
