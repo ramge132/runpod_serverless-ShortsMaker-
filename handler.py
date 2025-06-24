@@ -17,11 +17,10 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 initialization_error = None
 pipe = None
 base_model_path = "weights/flux1_dev"
-# Nunchaku는 4-bit 양자화 모델을 사용합니다.
-nunchaku_repo_id = "mit-han-lab/nunchaku-flux.1-dev"
-nunchaku_filename = "svdq-int4_r32-flux.1-dev.safetensors"
-nunchaku_transformer_path = f"weights/nunchaku_transformer/{nunchaku_filename}"
-DTYPE = torch.bfloat16 # Nunchaku 예제에서는 bfloat16을 사용합니다.
+# config.json이 포함된 fp4 버전 리포지토리로 변경
+nunchaku_repo_id = "mit-han-lab/svdq-fp4-flux.1-dev" 
+nunchaku_model_path = f"weights/{nunchaku_repo_id.replace('/', '_')}"
+DTYPE = torch.bfloat16 # Nunchaku 예제에서는 bfloat16을 사용
 
 logging.info("Worker starting up...")
 try:
@@ -37,25 +36,22 @@ try:
     else:
         logging.info("Base model already exists, skipping download.")
 
-    # --- 2. Nunchaku 양자화 트랜스포머 다운로드 ---
-    nunchaku_dir = os.path.dirname(nunchaku_transformer_path)
-    if not os.path.exists(nunchaku_transformer_path):
-        logging.info(f"Nunchaku transformer not found. Downloading from {nunchaku_repo_id}...")
-        os.makedirs(nunchaku_dir, exist_ok=True)
+    # --- 2. Nunchaku 트랜스포머 리포지토리 전체 다운로드 ---
+    if not os.path.exists(nunchaku_model_path):
+        logging.info(f"Nunchaku model repo not found. Downloading from {nunchaku_repo_id}...")
         hf_token = os.environ.get("HF_TOKEN")
         if not hf_token:
             raise ValueError("Hugging Face Token not found in environment variables.")
         login(token=hf_token)
-        snapshot_download(repo_id=nunchaku_repo_id, allow_patterns=[nunchaku_filename], local_dir=nunchaku_dir, local_dir_use_symlinks=False)
-        # HuggingFace 라이브러리는 파일을 전체 경로에 저장하므로, 파일 위치를 직접 사용합니다.
-        # os.rename은 필요 없습니다.
-        logging.info("Nunchaku transformer downloaded successfully.")
+        snapshot_download(repo_id=nunchaku_repo_id, local_dir=nunchaku_model_path, local_dir_use_symlinks=False)
+        logging.info("Nunchaku model repo downloaded successfully.")
     else:
-        logging.info("Nunchaku transformer already exists, skipping download.")
+        logging.info("Nunchaku model repo already exists, skipping download.")
 
     # --- 3. Nunchaku를 사용하여 파이프라인 구성 ---
     logging.info("Loading Nunchaku transformer...")
-    transformer = NunchakuFluxTransformer2dModel.from_pretrained(os.path.join(nunchaku_dir, nunchaku_filename))
+    # 다운로드된 Nunchaku 리포지토리 디렉토리에서 트랜스포머를 로드
+    transformer = NunchakuFluxTransformer2dModel.from_pretrained(nunchaku_model_path)
 
     logging.info("Loading base pipeline and injecting Nunchaku transformer...")
     pipe = FluxPipeline.from_pretrained(
