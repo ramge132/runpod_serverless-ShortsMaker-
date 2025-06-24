@@ -7,4 +7,4 @@ huggingface_hub
 accelerate
 protobuf
 sentencepiece
-# xformers # Dockerfile에서 직접 설치하므로 제거
+xformers
