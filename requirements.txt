@@ -1,11 +1,10 @@
 runpod
-# torch # Dockerfile에서 직접 설치하므로 제거
 diffusers
 transformers
 huggingface_hub
-# boto3 # S3를 사용하지 않으므로 주석 처리
 accelerate
 protobuf
 sentencepiece
-# xformers # Nunchaku와 충돌 가능성이 있으므로 제거
-nunchaku
+
+# Nunchaku 4-bit inference 엔진 설치
+nunchaku @ https://huggingface.co/mit-han-lab/nunchaku/resolve/main/nunchaku-0.3.0+torch2.6-cp311-cp311-linux_x86_64.whl
