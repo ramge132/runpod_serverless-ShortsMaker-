@@ -111,7 +111,6 @@ from huggingface_hub import snapshot_download, login
 import logging
 
 # --- 로깅 설정 ---
-# 로그 레벨을 INFO로 설정하여 모든 메시지가 보이도록 함
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # --- 초기화 (워커 시작 시 1회 실행) ---
@@ -153,10 +152,14 @@ try:
         torch_dtype=torch.bfloat16
     )
     pipe = pipe.to("cuda")
-    logging.info("Pipeline loaded successfully.")
+    
+    # --- xFormers 메모리 최적화 활성화 ---
+    logging.info("Enabling xformers memory efficient attention...")
+    pipe.enable_xformers_memory_efficient_attention()
+
+    logging.info("Pipeline loaded and optimized successfully.")
 
 except Exception as e:
-    # 에러 발생 시, 스택 트레이스와 함께 에러 로그를 남김
     initialization_error = f"Initialization failed: {e}"
     logging.error(initialization_error, exc_info=True)
 
