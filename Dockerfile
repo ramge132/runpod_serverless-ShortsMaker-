@@ -19,11 +19,10 @@ WORKDIR /app
 # requirements.txt 먼저 복사하여 Docker 캐시를 효율적으로 사용
 COPY requirements.txt .
 
-# PyTorch 및 관련 라이브러리를 호환되는 버전으로 직접 설치
-RUN pip install torch==2.2.2 torchvision==0.17.2 torchaudio==2.2.2 --index-url https://download.pytorch.org/whl/cu121
-
-# 나머지 Python 패키지 설치
-RUN pip install --no-cache-dir -r requirements.txt
+# PyTorch 및 모든 Python 패키지를 하나의 RUN 명령어로 설치하여 버전 충돌 방지
+RUN pip install --no-cache-dir \
+    torch==2.2.2 torchvision==0.17.2 torchaudio==2.2.2 --index-url https://download.pytorch.org/whl/cu121 && \
+    pip install --no-cache-dir -r requirements.txt
 
 # 나머지 소스 코드 복사
 COPY . .
