@@ -17,7 +17,6 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 initialization_error = None
 pipe = None
 base_model_path = "weights/flux1_dev"
-# INT4 버전의 Nunchaku 리포지토리로 최종 수정 (하드웨어 호환성)
 nunchaku_repo_id = "mit-han-lab/svdq-int4-flux.1-dev" 
 nunchaku_model_path = f"weights/{nunchaku_repo_id.replace('/', '_')}"
 DTYPE = torch.bfloat16
@@ -50,7 +49,6 @@ try:
 
     # --- 3. Nunchaku를 사용하여 파이프라인 구성 ---
     logging.info("Loading Nunchaku transformer...")
-    # 다운로드된 Nunchaku 리포지토리 디렉토리에서 트랜스포머를 로드
     transformer = NunchakuFluxTransformer2dModel.from_pretrained(nunchaku_model_path)
 
     logging.info("Loading base pipeline and injecting Nunchaku transformer...")
@@ -107,11 +105,14 @@ def handler(job):
         img_bytes = buffer.getvalue()
         base64_encoded_image = base64.b64encode(img_bytes).decode('utf-8')
         
+        # --- Base64 문자열 전체를 로그에 출력 ---
+        logging.info("Generated Base64 string:")
+        print(base64_encoded_image) # print를 사용하여 다른 로그와 분리
+        
         logging.info("Image encoded successfully.")
         
         return {
-            "image_base64": base64_encoded_image,
-            "image_prompt": prompt
+            "status": "Completed successfully. The full Base64 string has been printed to the logs."
         }
 
     except Exception as e:
