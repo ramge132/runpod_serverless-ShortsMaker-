@@ -3,5 +3,7 @@ torch
 diffusers
 transformers
 huggingface_hub
-boto3
+# boto3 # S3를 사용하지 않으므로 주석 처리
 accelerate
+protobuf
+sentencepiece
