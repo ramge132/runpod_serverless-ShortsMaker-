@@ -122,7 +122,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # --- 전역 변수 및 헬퍼 함수 ---
 initialization_error = None
 model_path = "weights/flux1_dev"
-DTYPE = torch.float16  # 선배의 조언에 따라 float16 사용
+DTYPE = torch.float16
 
 def flush():
     """GPU 메모리를 정리하는 헬퍼 함수"""
@@ -182,14 +182,13 @@ def handler(job):
         tokenizer = CLIPTokenizer.from_pretrained(model_path, subfolder="tokenizer")
         tokenizer_2 = T5TokenizerFast.from_pretrained(model_path, subfolder="tokenizer_2")
         
-        # 임시 파이프라인을 사용하여 인코딩
         temp_pipe = FluxPipeline(
             text_encoder=text_encoder, text_encoder_2=text_encoder_2, tokenizer=tokenizer, tokenizer_2=tokenizer_2,
             transformer=None, vae=None, scheduler=None
         )
-        prompt_embeds, pooled_prompt_embeds = temp_pipe.encode_prompt(prompt=prompt, prompt_2=prompt)
+        # 3개의 값을 반환받도록 수정
+        prompt_embeds, pooled_prompt_embeds, _ = temp_pipe.encode_prompt(prompt=prompt, prompt_2=prompt)
         
-        # 메모리 해제
         del text_encoder, text_encoder_2, tokenizer, tokenizer_2, temp_pipe
         flush()
         logging.info("Stage 1 complete. Text encoders flushed.")
@@ -199,7 +198,6 @@ def handler(job):
         transformer = FluxPipeline.from_pretrained(model_path, subfolder="transformer", torch_dtype=DTYPE).to("cuda")
         scheduler = FluxPipeline.from_pretrained(model_path, subfolder="scheduler").scheduler
         
-        # 두 번째 임시 파이프라인
         temp_pipe_2 = FluxPipeline(
             transformer=transformer, scheduler=scheduler,
             text_encoder=None, text_encoder_2=None, tokenizer=None, tokenizer_2=None, vae=None
@@ -213,7 +211,6 @@ def handler(job):
             output_type="latent"
         ).images
         
-        # 메모리 해제
         del transformer, scheduler, temp_pipe_2
         flush()
         logging.info("Stage 2 complete. Transformer flushed.")
@@ -225,7 +222,6 @@ def handler(job):
         latents = latents / vae.config.scaling_factor
         image = vae.decode(latents, return_dict=False)[0]
         
-        # 메모리 해제
         del vae
         flush()
         logging.info("Stage 3 complete. VAE flushed.")
