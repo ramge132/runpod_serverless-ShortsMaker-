@@ -9,8 +9,9 @@ import base64
 from huggingface_hub import snapshot_download, login
 import logging
 import gc
-import subprocess
 import uuid
+import boto3
+from botocore.exceptions import NoCredentialsError
 
 # --- 로깅 설정 ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -23,9 +24,16 @@ nunchaku_repo_id = "mit-han-lab/svdq-int4-flux.1-dev"
 nunchaku_model_path = f"weights/{nunchaku_repo_id.replace('/', '_')}"
 DTYPE = torch.bfloat16
 
+# S3 관련 설정
+S3_BUCKET_NAME = os.environ.get('S3_BUCKET_NAME')
+AWS_REGION = os.environ.get('AWS_REGION')
+
 logging.info("Worker starting up...")
 try:
-    # --- 1. 베이스 모델(Text Encoders, VAE 등) 다운로드 ---
+    if not S3_BUCKET_NAME or not AWS_REGION:
+        raise ValueError("S3_BUCKET_NAME and AWS_REGION environment variables must be set.")
+
+    # --- 1. 베이스 모델 다운로드 ---
     if not os.path.exists(base_model_path):
         logging.info(f"Base model not found. Downloading from black-forest-labs/FLUX.1-dev...")
         hf_token = os.environ.get("HF_TOKEN")
@@ -37,7 +45,7 @@ try:
     else:
         logging.info("Base model already exists, skipping download.")
 
-    # --- 2. Nunchaku 트랜스포머 리포지토리 전체 다운로드 ---
+    # --- 2. Nunchaku 트랜스포머 다운로드 ---
     if not os.path.exists(nunchaku_model_path):
         logging.info(f"Nunchaku model repo not found. Downloading from {nunchaku_repo_id}...")
         hf_token = os.environ.get("HF_TOKEN")
@@ -49,7 +57,7 @@ try:
     else:
         logging.info("Nunchaku model repo already exists, skipping download.")
 
-    # --- 3. Nunchaku를 사용하여 파이프라인 구성 ---
+    # --- 3. Nunchaku 파이프라인 구성 ---
     logging.info("Loading Nunchaku transformer...")
     transformer = NunchakuFluxTransformer2dModel.from_pretrained(nunchaku_model_path)
 
@@ -69,7 +77,6 @@ except Exception as e:
 # ------------------------------------
 
 def create_prompt(input_data):
-    """입력 데이터로부터 이미지 생성 프롬프트를 생성합니다."""
     metadata = input_data.get('story_metadata', {})
     audios = input_data.get('audios', [])
     title = metadata.get('title', 'A story')
@@ -101,30 +108,37 @@ def handler(job):
                 generator=generator
             ).images[0]
         
-        logging.info("Image generated. Uploading to transfer.sh...")
+        logging.info("Image generated. Uploading to S3...")
         
-        # 이미지를 임시 파일로 저장
-        temp_filename = f"/tmp/{uuid.uuid4()}.png"
-        image.save(temp_filename)
+        # 이미지를 메모리 내 버퍼에 저장
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        buffer.seek(0) # 버퍼의 포인터를 처음으로 되돌림
         
-        # curl을 사용하여 transfer.sh에 업로드
-        upload_command = ["curl", "--upload-file", temp_filename, f"https://transfer.sh/{os.path.basename(temp_filename)}"]
-        result = subprocess.run(upload_command, capture_output=True, text=True)
+        # S3에 업로드
+        s3_client = boto3.client('s3', region_name=AWS_REGION)
+        file_key = f"images/{uuid.uuid4()}.png"
         
-        # 임시 파일 삭제
-        os.remove(temp_filename)
+        s3_client.upload_fileobj(
+            buffer,
+            S3_BUCKET_NAME,
+            file_key,
+            ExtraArgs={'ContentType': 'image/png'}
+        )
         
-        if result.returncode == 0:
-            image_url = result.stdout.strip()
-            logging.info(f"Image uploaded successfully: {image_url}")
-            return {
-                "image_url": image_url,
-                "image_prompt": prompt
-            }
-        else:
-            logging.error(f"Failed to upload image: {result.stderr}")
-            return {"error": "Failed to upload image to transfer.sh", "details": result.stderr}
+        image_url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{file_key}"
+        
+        logging.info(f"Image uploaded successfully: {image_url}")
+        
+        return {
+            "image_url": image_url,
+            "image_prompt": prompt
+        }
 
+    except NoCredentialsError:
+        error_msg = "S3 credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables."
+        logging.error(error_msg)
+        return {"error": error_msg}
     except Exception as e:
         logging.error(f"Error during handling job: {e}", exc_info=True)
         gc.collect()

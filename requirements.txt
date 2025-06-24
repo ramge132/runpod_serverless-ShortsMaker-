@@ -5,6 +5,7 @@ huggingface_hub
 accelerate
 protobuf
 sentencepiece
+boto3
 
 # Python 3.11 + PyTorch 2.6용 nunchaku wheel
 nunchaku @ https://huggingface.co/mit-han-lab/nunchaku/resolve/main/nunchaku-0.2.0+torch2.6-cp311-cp311-linux_x86_64.whl
