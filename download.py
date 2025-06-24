@@ -4,7 +4,7 @@ from huggingface_hub import snapshot_download, login
 
 def download_model_legacy():
     """
-    이 함수는 더 이상 사용되지 않지만, 로직 기록을 위해 남김.
+    이 함수는 더 이상 사용되지 않지만, 로직 기록을 위해 남겨둡니다.
     """
     # RunPod의 환경 변수에서 HF_TOKEN을 읽어옵니다.
     hf_token = os.environ.get("HF_TOKEN")

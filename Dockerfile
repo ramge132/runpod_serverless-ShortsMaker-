@@ -19,11 +19,12 @@ WORKDIR /app
 # requirements.txt 먼저 복사하여 Docker 캐시를 효율적으로 사용
 COPY requirements.txt .
 
-# PyTorch 핵심 라이브러리를 먼저 설치
+# PyTorch 및 xFormers 등 핵심 라이브러리를 호환되는 버전으로 한 번에 설치
 RUN pip install --no-cache-dir \
-    torch==2.2.2 torchvision==0.17.2 torchaudio==2.2.2 --index-url https://download.pytorch.org/whl/cu121
+    torch==2.2.2 torchvision==0.17.2 torchaudio==2.2.2 xformers \
+    --index-url https://download.pytorch.org/whl/cu121
 
-# 그 다음 requirements.txt의 나머지 패키지들을 설치 (xformers 포함)
+# 나머지 순수 Python 패키지 설치
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 나머지 소스 코드 복사
