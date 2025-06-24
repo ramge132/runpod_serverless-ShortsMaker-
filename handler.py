@@ -102,7 +102,7 @@
 
 import runpod
 import torch
-from diffusers import FluxPipeline, AutoencoderKL
+from diffusers import FluxPipeline, AutoencoderKL, FluxTransformer2DModel
 from diffusers.image_processor import VaeImageProcessor
 from transformers import T5EncoderModel, CLIPTextModel, CLIPTokenizer, T5TokenizerFast
 import os
@@ -186,7 +186,6 @@ def handler(job):
             text_encoder=text_encoder, text_encoder_2=text_encoder_2, tokenizer=tokenizer, tokenizer_2=tokenizer_2,
             transformer=None, vae=None, scheduler=None
         )
-        # 3개의 값을 반환받도록 수정
         prompt_embeds, pooled_prompt_embeds, _ = temp_pipe.encode_prompt(prompt=prompt, prompt_2=prompt)
         
         del text_encoder, text_encoder_2, tokenizer, tokenizer_2, temp_pipe
@@ -195,7 +194,8 @@ def handler(job):
 
         # --- 2단계: 디노이징 (Latent 생성) ---
         logging.info("Stage 2: Denoising to generate latents...")
-        transformer = FluxPipeline.from_pretrained(model_path, subfolder="transformer", torch_dtype=DTYPE).to("cuda")
+        # 올바른 클래스를 사용하여 transformer만 로드
+        transformer = FluxTransformer2DModel.from_pretrained(model_path, subfolder="transformer", torch_dtype=DTYPE).to("cuda")
         scheduler = FluxPipeline.from_pretrained(model_path, subfolder="scheduler").scheduler
         
         temp_pipe_2 = FluxPipeline(
