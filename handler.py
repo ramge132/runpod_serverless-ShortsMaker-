@@ -1,203 +1,84 @@
-# import runpod
-# import torch
-# from diffusers import FluxPipeline
-# import os
-# import boto3
-# from botocore.exceptions import NoCredentialsError
-# from io import BytesIO
+import os
+import json
+import logging
 
-# # --- 초기화 (워커 시작 시 1회 실행) ---
-# # 모델 로드
-# # download.py에서 받은 모델 경로를 정확히 지정해야 합니다.
-# model_path = "weights" # snapshot_download가 이 디렉토리에 모델을 저장합니다.
+from huggingface_hub import hf_hub_download
+from nunchaku.models.transformers.transformer_flux import NunchakuFluxTransformer2dModel
 
-# # FLUX 파이프라인은 from_pretrained를 사용하여 디렉토리에서 직접 로드합니다.
-# pipe = FluxPipeline.from_pretrained(
-#     model_path, 
-#     torch_dtype=torch.bfloat16 # FLUX 모델은 bfloat16에 최적화되어 있습니다.
-# )
-# pipe = pipe.to("cuda")
+# --- 로깅 설정 ---
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# # S3 클라이언트 설정 (결과 업로드용)
-# # RunPod 엔드포인트의 환경 변수에서 설정된 값을 사용합니다.
-# s3_client = boto3.client(
-#     's3',
-#     aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID'),
-#     aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY'),
-#     region_name=os.environ.get('AWS_REGION')
-# )
-# S3_BUCKET_NAME = os.environ.get('S3_BUCKET_NAME')
-# # ------------------------------------
-
-# def create_prompt(input_data):
-#     """입력 데이터로부터 이미지 생성 프롬프트를 생성합니다."""
-#     metadata = input_data.get('story_metadata', {})
-#     audios = input_data.get('audios', [])
-    
-#     title = metadata.get('title', 'A story')
-#     characters = metadata.get('characters', [])
-    
-#     # 캐릭터 설명 조합
-#     char_descriptions = ", ".join([f"{c['name']} ({c['description']})" for c in characters])
-    
-#     # 현재 씬의 텍스트 조합
-#     scene_text = " ".join([a['text'] for a in audios])
-    
-#     # 최종 프롬프트
-#     # 이 부분을 고도화하여 이미지 품질을 높일 수 있습니다.
-#     prompt = f"A scene from '{title}'. {char_descriptions}. The scene depicts: {scene_text}. cinematic, high detail, photorealistic, 8k"
-    
-#     return prompt
-
-# def handler(job):
-#     """RunPod 서버리스 핸들러 함수"""
-#     try:
-#         job_input = job['input']
-        
-#         # 1. 프롬프트 생성
-#         prompt = create_prompt(job_input)
-#         print(f"Generated Prompt: {prompt}")
-        
-#         # 2. 이미지 생성 (FLUX 파이프라인 사용)
-#         # generator를 사용하여 재현 가능한 결과를 얻을 수 있습니다.
-#         generator = torch.Generator(device="cuda").manual_seed(job_input.get('seed', 42))
-#         image = pipe(
-#             prompt=prompt, 
-#             num_inference_steps=28, 
-#             guidance_scale=7.0,
-#             generator=generator
-#         ).images[0]
-        
-#         # 3. 생성된 이미지를 S3에 업로드
-#         buffer = BytesIO()
-#         image.save(buffer, format="PNG")
-#         buffer.seek(0)
-        
-#         # 파일명 생성 (storyId와 sceneId 사용)
-#         story_id = job_input['story_metadata']['story_id']
-#         scene_id = job_input['scene_id']
-#         s3_key = f"generated_images/{story_id}/{scene_id}.png"
-        
-#         s3_client.upload_fileobj(
-#             buffer,
-#             S3_BUCKET_NAME,
-#             s3_key,
-#             ExtraArgs={'ContentType': 'image/png'}
-#         )
-        
-#         # 4. S3 URL 생성 및 반환
-#         image_url = f"https://{S3_BUCKET_NAME}.s3.{os.environ.get('AWS_REGION')}.amazonaws.com/{s3_key}"
-        
-#         return {
-#             "image_url": image_url,
-#             "image_prompt": prompt # Java 백엔드에서 저장할 수 있도록 프롬프트도 반환
-#         }
-
-#     except Exception as e:
-#         print(f"Error: {e}")
-#         return {"error": str(e)}
-
-# # RunPod 핸들러 시작
-# runpod.serverless.start({"handler": handler})
-
-import runpod
-import torch
-from diffusers import FluxPipeline
-
-# nunchaku 임포트
-from nunchaku import NunchakuFluxTransformer2dModel
-from nunchaku.utils import get_precision
-
-import os, io, traceback, base64, logging, gc
-from huggingface_hub import snapshot_download, login
-
-# 메모리 단편화 방지
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128"
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-initialization_error = None
-pipe = None
-
-logging.info("Worker starting up...")
-try:
-    # HF token 확인
-    hf_token = os.environ.get("HF_TOKEN")
-    if not hf_token:
-        raise ValueError("HF_TOKEN 환경변수 미설정")
-    login(token=hf_token)
-
-    # --- 1. Base model 다운로드 (기존 코드 그대로) ---
-    base_model_path = "weights/flux1_dev"
-    if not os.path.exists(base_model_path):
-        snapshot_download(
-            repo_id="black-forest-labs/FLUX.1-dev",
-            local_dir=base_model_path,
-            local_dir_use_symlinks=False,
-            ignore_patterns=["*.md","*.git*","*.png","*.jpg"]
-        )
-
-    # --- 2. Nunchaku transformer 로드 (.from_pretrained 로 자동 다운로드) ---
-    precision = get_precision()  # int4 / fp4 자동 감지
-    logging.info(f"Detected precision: {precision}")
-    transformer = NunchakuFluxTransformer2dModel.from_pretrained(
-        f"mit-han-lab/nunchaku-flux.1-dev/svdq-{precision}_r32-flux.1-dev.safetensors"
-    )
-
-    # --- 3. FluxPipeline 구성 ---
-    pipe = FluxPipeline.from_pretrained(
-        base_model_path,
-        transformer=transformer,
-        torch_dtype=torch.float16
-    ).to("cuda")
-
-    logging.info("Pipeline with Nunchaku loaded successfully.")
-
-except Exception as e:
-    initialization_error = f"Initialization failed: {e}"
-    logging.error(initialization_error, exc_info=True)
-
-
-def create_prompt(input_data):
-    metadata = input_data.get('story_metadata', {})
-    audios   = input_data.get('audios', [])
-    title    = metadata.get('title', 'A story')
-    chars    = metadata.get('characters', [])
-    descs    = ", ".join([f"{c['name']} ({c['description']})" for c in chars])
-    scene    = " ".join([a['text'] for a in audios])
-    return f"A scene from '{title}'. {descs}. The scene depicts: {scene}. cinematic, high detail, photorealistic, 8k"
-
-
-def handler(job):
-    if initialization_error:
-        return {"error": initialization_error}
-    if not pipe:
-        return {"error": "Worker 미초기화. 로그 확인"}
+def initialize_model():
+    """
+    Hugging Face Hub에서 모델을 가져와 초기화합니다.
+    repo_id와 filename을 분리하여 from_pretrained 또는 hf_hub_download 페일오버 처리.
+    """
+    device    = os.environ.get("DEVICE", "cuda")
+    precision = os.environ.get("PRECISION", "fp4")  # int4, fp4 등
+    repo_id   = "mit-han-lab/nunchaku-flux.1-dev"
+    filename  = "svdq-fp4_r32-flux.1-dev.safetensors"
+    token     = os.environ.get("HF_TOKEN", None)
 
     try:
-        data   = job['input']
-        prompt = create_prompt(data)
-        logging.info(f"Prompt: {prompt}")
+        logger.info(f"Loading model via from_pretrained(repo_id={repo_id}, filename={filename}, precision={precision})")
+        transformer = NunchakuFluxTransformer2dModel.from_pretrained(
+            repo_id=repo_id,
+            filename=filename,
+            device=device,
+            precision=precision,
+            token=token,
+        )
+    except TypeError:
+        # from_pretrained 에 filename 인자가 없을 때의 페일오버
+        logger.info("from_pretrained 에 filename 인자 미지원, hf_hub_download 로 weights 파일을 먼저 다운로드합니다.")
+        local_path = hf_hub_download(
+            repo_id=repo_id,
+            filename=filename,
+            token=token,
+        )
+        transformer = NunchakuFluxTransformer2dModel.from_pretrained(
+            local_path,
+            device=device,
+            precision=precision,
+        )
 
-        with torch.no_grad():
-            gen   = torch.Generator("cuda").manual_seed(data.get('seed', 42))
-            image = pipe(
-                prompt=prompt,
-                num_inference_steps=28,
-                guidance_scale=7.0,
-                generator=gen
-            ).images[0]
+    return transformer
 
-        buf = io.BytesIO()
-        image.save(buf, format="PNG")
-        img_b64 = base64.b64encode(buf.getvalue()).decode()
+# 서버리스 시작 시 단 한 번만 모델을 초기화
+logger.info("모델 초기화 시작...")
+transformer = initialize_model()
+logger.info("모델 초기화 완료.")
 
-        return {"image_base64": img_b64, "image_prompt": prompt}
+def handler(event):
+    """
+    RunPod Serverless가 호출하는 entry point.
+    event["body"] 에 JSON 형식의 페이로드가 들어옵니다.
+    """
+    try:
+        # event.body 가 문자열일 수 있으니 파싱
+        body = event.get("body", {})
+        if isinstance(body, str):
+            body = json.loads(body)
+        input_data = body.get("input", {})
+
+        logger.info(f"Received input: {input_data}")
+        # Nunchaku Flux 모델에 inference 요청
+        result = transformer.run_inference(input_data)
+
+        return {
+            "statusCode": 200,
+            "body": json.dumps({"output": result}),
+        }
 
     except Exception as e:
-        logging.error("Job 처리 중 에러", exc_info=True)
-        gc.collect(); torch.cuda.empty_cache()
-        return {"error": str(e), "trace": traceback.format_exc()}
+        logger.error("Error during inference", exc_info=True)
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": str(e)}),
+        }
 
-
-runpod.serverless.start({"handler": handler})
+if __name__ == "__main__":
+    # 로컬 테스트 혹은 Docker 컨테이너 내 직접 실행용
+    from runpod.serverless import start
+    start(handler)
