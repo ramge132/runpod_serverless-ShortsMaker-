@@ -104,31 +104,36 @@ import runpod
 import torch
 from diffusers import FluxPipeline
 import os
-from io import BytesIO
+import io
 import traceback
 import base64
 from huggingface_hub import snapshot_download, login
+import logging
+
+# --- 로깅 설정 ---
+# 로그 레벨을 INFO로 설정하여 모든 메시지가 보이도록 함
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # --- 초기화 (워커 시작 시 1회 실행) ---
 pipe = None
 initialization_error = None
 
-print("Worker starting up...")
+logging.info("Worker starting up...")
 
 try:
     # --- 모델 다운로드 (실행 시점) ---
     model_path = "weights/flux1_dev"
     
     if not os.path.exists(model_path):
-        print(f"Model not found at {model_path}. Downloading...")
+        logging.info(f"Model not found at {model_path}. Downloading...")
         
         hf_token = os.environ.get("HF_TOKEN")
         if not hf_token:
             raise ValueError("Hugging Face Token not found in environment variables. Please set HF_TOKEN.")
         
-        print("Logging in to Hugging Face Hub...")
+        logging.info("Logging in to Hugging Face Hub...")
         login(token=hf_token)
-        print("Login successful.")
+        logging.info("Login successful.")
 
         HF_REPO_ID = "black-forest-labs/FLUX.1-dev"
         snapshot_download(
@@ -137,33 +142,23 @@ try:
             local_dir_use_symlinks=False,
             ignore_patterns=["*.md","*.git*","*.png","*.jpg"]
         )
-        print("Model downloaded successfully.")
+        logging.info("Model downloaded successfully.")
     else:
-        print("Model already exists, skipping download.")
-
-    # --- [디버깅] 다운로드된 디렉토리의 파일 목록 출력 ---
-    print(f"Checking contents of directory: {model_path}")
-    if os.path.exists(model_path):
-        file_list = os.listdir(model_path)
-        print(f"Files in {model_path}: {file_list}")
-        if not file_list:
-            print("Warning: The model directory is empty.")
-    else:
-        print(f"Warning: The model directory {model_path} does not exist.")
-    # ----------------------------------------------------
+        logging.info("Model already exists, skipping download.")
 
     # --- 파이프라인 로드 ---
-    print("Loading FLUX model pipeline...")
+    logging.info("Loading FLUX model pipeline...")
     pipe = FluxPipeline.from_pretrained(
         model_path, 
         torch_dtype=torch.bfloat16
     )
     pipe = pipe.to("cuda")
-    print("Pipeline loaded successfully.")
+    logging.info("Pipeline loaded successfully.")
 
 except Exception as e:
-    initialization_error = f"Initialization failed: {e}\n{traceback.format_exc()}"
-    print(initialization_error)
+    # 에러 발생 시, 스택 트레이스와 함께 에러 로그를 남김
+    initialization_error = f"Initialization failed: {e}"
+    logging.error(initialization_error, exc_info=True)
 
 # ------------------------------------
 
@@ -193,7 +188,7 @@ def handler(job):
         job_input = job['input']
         
         prompt = create_prompt(job_input)
-        print(f"Generated Prompt: {prompt}")
+        logging.info(f"Generated Prompt: {prompt}")
         
         generator = torch.Generator(device="cuda").manual_seed(job_input.get('seed', 42))
         image = pipe(
@@ -203,13 +198,13 @@ def handler(job):
             generator=generator
         ).images[0]
         
-        print("Encoding image to Base64...")
-        buffer = BytesIO()
+        logging.info("Encoding image to Base64...")
+        buffer = io.BytesIO()
         image.save(buffer, format="PNG")
         img_bytes = buffer.getvalue()
         base64_encoded_image = base64.b64encode(img_bytes).decode('utf-8')
         
-        print("Image encoded successfully.")
+        logging.info("Image encoded successfully.")
         
         return {
             "image_base64": base64_encoded_image,
@@ -217,9 +212,8 @@ def handler(job):
         }
 
     except Exception as e:
-        error_trace = traceback.format_exc()
-        print(f"Error during handling job: {e}\n{error_trace}")
-        return {"error": f"Job failed: {e}", "trace": error_trace}
+        logging.error(f"Error during handling job: {e}", exc_info=True)
+        return {"error": f"Job failed: {e}", "trace": traceback.format_exc()}
 
 # RunPod 핸들러 시작
 runpod.serverless.start({"handler": handler})
