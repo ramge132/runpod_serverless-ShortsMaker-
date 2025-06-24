@@ -17,10 +17,10 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 initialization_error = None
 pipe = None
 base_model_path = "weights/flux1_dev"
-# config.json이 포함된 fp4 버전 리포지토리로 변경
-nunchaku_repo_id = "mit-han-lab/svdq-fp4-flux.1-dev" 
+# INT4 버전의 Nunchaku 리포지토리로 최종 수정 (하드웨어 호환성)
+nunchaku_repo_id = "mit-han-lab/svdq-int4-flux.1-dev" 
 nunchaku_model_path = f"weights/{nunchaku_repo_id.replace('/', '_')}"
-DTYPE = torch.bfloat16 # Nunchaku 예제에서는 bfloat16을 사용
+DTYPE = torch.bfloat16
 
 logging.info("Worker starting up...")
 try:
