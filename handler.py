@@ -100,130 +100,104 @@
 # # RunPod 핸들러 시작
 # runpod.serverless.start({"handler": handler})
 
-
 import runpod
 import torch
 from diffusers import FluxPipeline
-from nunchaku import NunchakuFluxTransformer2dModel # Nunchaku 전용 트랜스포머 임포트 (2d로 수정)
-import os
-import io
-import traceback
-import base64
-from huggingface_hub import snapshot_download, login
-import logging
-import gc
 
-# --- 메모리 단편화 방지 (스크립트 최상단) ---
+# nunchaku 임포트
+from nunchaku import NunchakuFluxTransformer2dModel
+from nunchaku.utils import get_precision
+
+import os, io, traceback, base64, logging, gc
+from huggingface_hub import snapshot_download, login
+
+# 메모리 단편화 방지
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128"
 
-# --- 로깅 설정 ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# --- 전역 변수 및 초기화 ---
 initialization_error = None
 pipe = None
-base_model_path = "weights/flux1_dev"
-nunchaku_transformer_path = "weights/nunchaku_transformer/flux.1-dev.safetensors"
-DTYPE = torch.float16
 
 logging.info("Worker starting up...")
 try:
-    # --- 1. 베이스 모델 다운로드 ---
+    # HF token 확인
+    hf_token = os.environ.get("HF_TOKEN")
+    if not hf_token:
+        raise ValueError("HF_TOKEN 환경변수 미설정")
+    login(token=hf_token)
+
+    # --- 1. Base model 다운로드 (기존 코드 그대로) ---
+    base_model_path = "weights/flux1_dev"
     if not os.path.exists(base_model_path):
-        logging.info(f"Base model not found at {base_model_path}. Downloading...")
-        hf_token = os.environ.get("HF_TOKEN")
-        if not hf_token:
-            raise ValueError("Hugging Face Token not found in environment variables.")
-        login(token=hf_token)
-        snapshot_download(repo_id="black-forest-labs/FLUX.1-dev", local_dir=base_model_path, local_dir_use_symlinks=False, ignore_patterns=["*.md","*.git*","*.png","*.jpg"])
-        logging.info("Base model downloaded successfully.")
-    else:
-        logging.info("Base model already exists, skipping download.")
+        snapshot_download(
+            repo_id="black-forest-labs/FLUX.1-dev",
+            local_dir=base_model_path,
+            local_dir_use_symlinks=False,
+            ignore_patterns=["*.md","*.git*","*.png","*.jpg"]
+        )
 
-    # --- 2. Nunchaku 트랜스포머 다운로드 ---
-    if not os.path.exists(nunchaku_transformer_path):
-        logging.info(f"Nunchaku transformer not found at {nunchaku_transformer_path}. Downloading...")
-        hf_token = os.environ.get("HF_TOKEN") # Re-check token in case of different security context
-        if not hf_token:
-            raise ValueError("Hugging Face Token not found in environment variables.")
-        login(token=hf_token)
-        # Nunchaku는 int4 모델을 사용합니다.
-        snapshot_download(repo_id="mit-han-lab/nunchaku-flux.1-dev", filename="svdq-int4_r32-flux.1-dev.safetensors", local_dir=os.path.dirname(nunchaku_transformer_path), local_dir_use_symlinks=False)
-        # 다운로드된 파일의 이름을 일관성 있게 변경
-        os.rename(os.path.join(os.path.dirname(nunchaku_transformer_path), "svdq-int4_r32-flux.1-dev.safetensors"), nunchaku_transformer_path)
-        logging.info("Nunchaku transformer downloaded successfully.")
-    else:
-        logging.info("Nunchaku transformer already exists, skipping download.")
+    # --- 2. Nunchaku transformer 로드 (.from_pretrained 로 자동 다운로드) ---
+    precision = get_precision()  # int4 / fp4 자동 감지
+    logging.info(f"Detected precision: {precision}")
+    transformer = NunchakuFluxTransformer2dModel.from_pretrained(
+        f"mit-han-lab/nunchaku-flux.1-dev/svdq-{precision}_r32-flux.1-dev.safetensors"
+    )
 
-    # --- 3. Nunchaku를 사용하여 파이프라인 구성 ---
-    logging.info("Loading Nunchaku transformer...")
-    transformer = NunchakuFluxTransformer2dModel.from_pretrained(nunchaku_transformer_path) # 2d로 수정
-
-    logging.info("Loading base pipeline and injecting Nunchaku transformer...")
+    # --- 3. FluxPipeline 구성 ---
     pipe = FluxPipeline.from_pretrained(
         base_model_path,
         transformer=transformer,
-        torch_dtype=DTYPE
+        torch_dtype=torch.float16
     ).to("cuda")
-    
+
     logging.info("Pipeline with Nunchaku loaded successfully.")
 
 except Exception as e:
     initialization_error = f"Initialization failed: {e}"
     logging.error(initialization_error, exc_info=True)
 
-# ------------------------------------
 
 def create_prompt(input_data):
     metadata = input_data.get('story_metadata', {})
-    audios = input_data.get('audios', [])
-    title = metadata.get('title', 'A story')
-    characters = metadata.get('characters', [])
-    char_descriptions = ", ".join([f"{c['name']} ({c['description']})" for c in characters])
-    scene_text = " ".join([a['text'] for a in audios])
-    prompt = f"A scene from '{title}'. {char_descriptions}. The scene depicts: {scene_text}. cinematic, high detail, photorealistic, 8k"
-    return prompt
+    audios   = input_data.get('audios', [])
+    title    = metadata.get('title', 'A story')
+    chars    = metadata.get('characters', [])
+    descs    = ", ".join([f"{c['name']} ({c['description']})" for c in chars])
+    scene    = " ".join([a['text'] for a in audios])
+    return f"A scene from '{title}'. {descs}. The scene depicts: {scene}. cinematic, high detail, photorealistic, 8k"
+
 
 def handler(job):
     if initialization_error:
         return {"error": initialization_error}
-    
     if not pipe:
-        return {"error": "Worker is not properly initialized. Check the logs for details."}
+        return {"error": "Worker 미초기화. 로그 확인"}
 
     try:
-        job_input = job['input']
-        prompt = create_prompt(job_input)
-        logging.info(f"Generated Prompt: {prompt}")
-        
+        data   = job['input']
+        prompt = create_prompt(data)
+        logging.info(f"Prompt: {prompt}")
+
         with torch.no_grad():
-            generator = torch.Generator("cuda").manual_seed(job_input.get('seed', 42))
+            gen   = torch.Generator("cuda").manual_seed(data.get('seed', 42))
             image = pipe(
-                prompt=prompt, 
-                prompt_2=prompt,
+                prompt=prompt,
                 num_inference_steps=28,
                 guidance_scale=7.0,
-                generator=generator
+                generator=gen
             ).images[0]
-        
-        logging.info("Encoding image to Base64...")
-        buffer = io.BytesIO()
-        image.save(buffer, format="PNG")
-        img_bytes = buffer.getvalue()
-        base64_encoded_image = base64.b64encode(img_bytes).decode('utf-8')
-        
-        logging.info("Image encoded successfully.")
-        
-        return {
-            "image_base64": base64_encoded_image,
-            "image_prompt": prompt
-        }
+
+        buf = io.BytesIO()
+        image.save(buf, format="PNG")
+        img_b64 = base64.b64encode(buf.getvalue()).decode()
+
+        return {"image_base64": img_b64, "image_prompt": prompt}
 
     except Exception as e:
-        logging.error(f"Error during handling job: {e}", exc_info=True)
-        gc.collect()
-        torch.cuda.empty_cache()
-        return {"error": f"Job failed: {e}", "trace": traceback.format_exc()}
+        logging.error("Job 처리 중 에러", exc_info=True)
+        gc.collect(); torch.cuda.empty_cache()
+        return {"error": str(e), "trace": traceback.format_exc()}
 
-# RunPod 핸들러 시작
+
 runpod.serverless.start({"handler": handler})
