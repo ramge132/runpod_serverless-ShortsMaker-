@@ -99,9 +99,12 @@
 
 # # RunPod 핸들러 시작
 # runpod.serverless.start({"handler": handler})
+
+
 import runpod
 import torch
 from diffusers import FluxPipeline
+from nunchaku import NunchakuFluxTransformer2DModel # Nunchaku 전용 트랜스포머 임포트
 import os
 import io
 import traceback
@@ -109,7 +112,6 @@ import base64
 from huggingface_hub import snapshot_download, login
 import logging
 import gc
-import nunchaku # Nunchaku 라이브러리 임포트
 
 # --- 메모리 단편화 방지 (스크립트 최상단) ---
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128"
@@ -120,42 +122,51 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # --- 전역 변수 및 초기화 ---
 initialization_error = None
 pipe = None
-model_path = "weights/flux1_dev"
+base_model_path = "weights/flux1_dev"
+nunchaku_transformer_path = "weights/nunchaku_transformer/flux.1-dev.safetensors"
 DTYPE = torch.float16
 
 logging.info("Worker starting up...")
 try:
-    # --- 1. 모델 다운로드 ---
-    if not os.path.exists(model_path):
-        logging.info(f"Model not found at {model_path}. Downloading...")
+    # --- 1. 베이스 모델 다운로드 ---
+    if not os.path.exists(base_model_path):
+        logging.info(f"Base model not found at {base_model_path}. Downloading...")
         hf_token = os.environ.get("HF_TOKEN")
         if not hf_token:
-            raise ValueError("Hugging Face Token not found in environment variables. Please set HF_TOKEN.")
-        
-        logging.info("Logging in to Hugging Face Hub...")
+            raise ValueError("Hugging Face Token not found in environment variables.")
         login(token=hf_token)
-        logging.info("Login successful.")
-
-        HF_REPO_ID = "black-forest-labs/FLUX.1-dev"
-        snapshot_download(repo_id=HF_REPO_ID, local_dir=model_path, local_dir_use_symlinks=False, ignore_patterns=["*.md","*.git*","*.png","*.jpg"])
-        logging.info("Model downloaded successfully.")
+        snapshot_download(repo_id="black-forest-labs/FLUX.1-dev", local_dir=base_model_path, local_dir_use_symlinks=False, ignore_patterns=["*.md","*.git*","*.png","*.jpg"])
+        logging.info("Base model downloaded successfully.")
     else:
-        logging.info("Model already exists, skipping download.")
+        logging.info("Base model already exists, skipping download.")
 
-    # --- 2. Nunchaku를 사용하여 파이프라인 로드 및 래핑 ---
-    logging.info("Loading FLUX model pipeline for Nunchaku...")
-    
-    # 파이프라인을 CPU에 float16으로 로드
+    # --- 2. Nunchaku 트랜스포머 다운로드 ---
+    if not os.path.exists(nunchaku_transformer_path):
+        logging.info(f"Nunchaku transformer not found at {nunchaku_transformer_path}. Downloading...")
+        hf_token = os.environ.get("HF_TOKEN") # Re-check token in case of different security context
+        if not hf_token:
+            raise ValueError("Hugging Face Token not found in environment variables.")
+        login(token=hf_token)
+        # Nunchaku는 int4 모델을 사용합니다.
+        snapshot_download(repo_id="mit-han-lab/nunchaku-flux.1-dev", filename="svdq-int4_r32-flux.1-dev.safetensors", local_dir=os.path.dirname(nunchaku_transformer_path), local_dir_use_symlinks=False)
+        # 다운로드된 파일의 이름을 일관성 있게 변경
+        os.rename(os.path.join(os.path.dirname(nunchaku_transformer_path), "svdq-int4_r32-flux.1-dev.safetensors"), nunchaku_transformer_path)
+        logging.info("Nunchaku transformer downloaded successfully.")
+    else:
+        logging.info("Nunchaku transformer already exists, skipping download.")
+
+    # --- 3. Nunchaku를 사용하여 파이프라인 구성 ---
+    logging.info("Loading Nunchaku transformer...")
+    transformer = NunchakuFluxTransformer2DModel.from_pretrained(nunchaku_transformer_path)
+
+    logging.info("Loading base pipeline and injecting Nunchaku transformer...")
     pipe = FluxPipeline.from_pretrained(
-        model_path, 
+        base_model_path,
+        transformer=transformer,
         torch_dtype=DTYPE
-    )
+    ).to("cuda")
     
-    # Nunchaku로 파이프라인을 래핑하여 자동 메모리 관리 활성화
-    logging.info("Wrapping pipeline with Nunchaku...")
-    pipe = nunchaku.wrap(pipe)
-    
-    logging.info("Pipeline loaded and wrapped with Nunchaku successfully.")
+    logging.info("Pipeline with Nunchaku loaded successfully.")
 
 except Exception as e:
     initialization_error = f"Initialization failed: {e}"
@@ -185,10 +196,8 @@ def handler(job):
         prompt = create_prompt(job_input)
         logging.info(f"Generated Prompt: {prompt}")
         
-        # Nunchaku가 래핑한 파이프라인을 직접 호출
-        # 내부적으로 필요한 모듈만 GPU로 이동시켜 실행됨
         with torch.no_grad():
-            generator = torch.Generator().manual_seed(job_input.get('seed', 42))
+            generator = torch.Generator("cuda").manual_seed(job_input.get('seed', 42))
             image = pipe(
                 prompt=prompt, 
                 prompt_2=prompt,
@@ -212,7 +221,6 @@ def handler(job):
 
     except Exception as e:
         logging.error(f"Error during handling job: {e}", exc_info=True)
-        # 에러 발생 후 메모리 정리
         gc.collect()
         torch.cuda.empty_cache()
         return {"error": f"Job failed: {e}", "trace": traceback.format_exc()}
