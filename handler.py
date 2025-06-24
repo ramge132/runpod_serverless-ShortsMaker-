@@ -110,6 +110,9 @@ import base64
 from huggingface_hub import snapshot_download, login
 import logging
 
+# --- 메모리 단편화 방지 (스크립트 최상단) ---
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128"
+
 # --- 로깅 설정 ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -145,17 +148,23 @@ try:
     else:
         logging.info("Model already exists, skipping download.")
 
-    # --- 파이프라인 로드 ---
-    logging.info("Loading FLUX model pipeline...")
+    # --- 파이프라인 로드 및 최적화 ---
+    logging.info("Loading FLUX model pipeline with optimizations...")
+    
+    # 1. FP16으로 모델 로드
     pipe = FluxPipeline.from_pretrained(
         model_path, 
-        torch_dtype=torch.bfloat16
+        torch_dtype=torch.float16
     )
-    pipe = pipe.to("cuda")
     
-    # --- xFormers 메모리 최적화 활성화 ---
-    logging.info("Enabling xformers memory efficient attention...")
+    # 2. CPU 오프로딩 활성화 (VRAM 대폭 절약)
+    pipe.enable_model_cpu_offload()
+    
+    # 3. xFormers 활성화 (어텐션 연산 최적화)
     pipe.enable_xformers_memory_efficient_attention()
+    
+    # 4. 어텐션 슬라이싱 활성화 (VRAM 피크 사용량 감소)
+    pipe.enable_attention_slicing()
 
     logging.info("Pipeline loaded and optimized successfully.")
 
@@ -193,13 +202,15 @@ def handler(job):
         prompt = create_prompt(job_input)
         logging.info(f"Generated Prompt: {prompt}")
         
-        generator = torch.Generator(device="cuda").manual_seed(job_input.get('seed', 42))
-        image = pipe(
-            prompt=prompt, 
-            num_inference_steps=28, 
-            guidance_scale=7.0,
-            generator=generator
-        ).images[0]
+        # torch.no_grad()로 불필요한 그래디언트 계산 방지
+        with torch.no_grad():
+            generator = torch.Generator().manual_seed(job_input.get('seed', 42))
+            image = pipe(
+                prompt=prompt, 
+                num_inference_steps=28, 
+                guidance_scale=7.0,
+                generator=generator
+            ).images[0]
         
         logging.info("Encoding image to Base64...")
         buffer = io.BytesIO()
