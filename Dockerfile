@@ -1,5 +1,5 @@
 # 1. CUDA12.4 + cuDNN8 런타임 + Ubuntu22.04
-FROM nvidia/cuda:12.4.1-cudnn8-runtime-ubuntu22.04
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
 
 # 2. Python 3.11 설치 (deadsnakes PPA)
 RUN apt-get update && apt-get install -y --no-install-recommends \
