@@ -33,31 +33,27 @@ try:
     if not S3_BUCKET_NAME or not AWS_REGION:
         raise ValueError("S3_BUCKET_NAME and AWS_REGION environment variables must be set.")
 
-    # --- 1. 베이스 모델 다운로드 ---
+    # --- 모델 다운로드 및 파이프라인 구성 ---
     if not os.path.exists(base_model_path):
         logging.info(f"Base model not found. Downloading from black-forest-labs/FLUX.1-dev...")
         hf_token = os.environ.get("HF_TOKEN")
-        if not hf_token:
-            raise ValueError("Hugging Face Token not found in environment variables.")
+        if not hf_token: raise ValueError("HF_TOKEN not found.")
         login(token=hf_token)
         snapshot_download(repo_id="black-forest-labs/FLUX.1-dev", local_dir=base_model_path, local_dir_use_symlinks=False, ignore_patterns=["*.md", "*.git*", "*.png", "*.jpg", "transformer/*"])
-        logging.info("Base model components downloaded successfully.")
+        logging.info("Base model components downloaded.")
     else:
-        logging.info("Base model already exists, skipping download.")
+        logging.info("Base model already exists.")
 
-    # --- 2. Nunchaku 트랜스포머 다운로드 ---
     if not os.path.exists(nunchaku_model_path):
         logging.info(f"Nunchaku model repo not found. Downloading from {nunchaku_repo_id}...")
         hf_token = os.environ.get("HF_TOKEN")
-        if not hf_token:
-            raise ValueError("Hugging Face Token not found in environment variables.")
+        if not hf_token: raise ValueError("HF_TOKEN not found.")
         login(token=hf_token)
         snapshot_download(repo_id=nunchaku_repo_id, local_dir=nunchaku_model_path, local_dir_use_symlinks=False)
-        logging.info("Nunchaku model repo downloaded successfully.")
+        logging.info("Nunchaku model repo downloaded.")
     else:
-        logging.info("Nunchaku model repo already exists, skipping download.")
+        logging.info("Nunchaku model repo already exists.")
 
-    # --- 3. Nunchaku 파이프라인 구성 ---
     logging.info("Loading Nunchaku transformer...")
     transformer = NunchakuFluxTransformer2dModel.from_pretrained(nunchaku_model_path)
 
@@ -76,33 +72,63 @@ except Exception as e:
 
 # ------------------------------------
 
-def create_prompt(input_data):
+def create_prompts(input_data):
+    """입력 데이터로부터 Positive 및 Negative 프롬프트를 생성합니다."""
     metadata = input_data.get('story_metadata', {})
     audios = input_data.get('audios', [])
-    title = metadata.get('title', 'A story')
+    
+    # --- 품질 및 스타일 키워드 ---
+    positive_quality_tags = "masterpiece, best quality, ultra-detailed, 8k, photorealistic, cinematic lighting"
+    negative_quality_tags = "ugly, deformed, noisy, blurry, distorted, low quality, bad anatomy, worst quality, watermark, text, signature"
+
+    # --- 캐릭터 정보 파싱 ---
     characters = metadata.get('characters', [])
-    char_descriptions = ", ".join([f"{c['name']} ({c['description']})" for c in characters])
-    scene_text = " ".join([a['text'] for a in audios])
-    prompt = f"A scene from '{title}'. {char_descriptions}. The scene depicts: {scene_text}. cinematic, high detail, photorealistic, 8k"
-    return prompt
+    gender_map = {0: "man", 1: "woman"}
+    character_descriptions = []
+    for char in characters:
+        name = char.get('name', 'person')
+        gender = gender_map.get(char.get('gender'), "")
+        desc = char.get('description', '')
+        character_descriptions.append(f"{name} as a {gender} ({desc})")
+    
+    # --- 씬 내용 파싱 ---
+    scene_descriptions = []
+    for audio in audios:
+        text = audio.get('text', '')
+        if audio.get('type') == 'dialogue':
+            char_name = audio.get('character', '')
+            emotion = audio.get('emotion', '')
+            scene_descriptions.append(f"{char_name} is speaking with a {emotion} expression, saying '{text}'")
+        else: # narration
+            scene_descriptions.append(text)
+
+    # --- 최종 프롬프트 조합 ---
+    final_positive_prompt = f"{positive_quality_tags}, a scene of ({', '.join(character_descriptions)}). {' '.join(scene_descriptions)}"
+    
+    return final_positive_prompt, negative_quality_tags
 
 def handler(job):
     if initialization_error:
         return {"error": initialization_error}
     
     if not pipe:
-        return {"error": "Worker is not properly initialized. Check the logs for details."}
+        return {"error": "Worker is not properly initialized."}
 
     try:
         job_input = job['input']
-        prompt = create_prompt(job_input)
-        logging.info(f"Generated Prompt: {prompt}")
+        
+        # 개선된 프롬프트 생성 함수 호출
+        positive_prompt, negative_prompt = create_prompts(job_input)
+        logging.info(f"Positive Prompt: {positive_prompt}")
+        logging.info(f"Negative Prompt: {negative_prompt}")
         
         with torch.no_grad():
             generator = torch.Generator("cuda").manual_seed(job_input.get('seed', 42))
             image = pipe(
-                prompt=prompt, 
-                prompt_2=prompt,
+                prompt=positive_prompt, 
+                prompt_2=positive_prompt,
+                negative_prompt=negative_prompt,
+                negative_prompt_2=negative_prompt,
                 num_inference_steps=28,
                 guidance_scale=7.0,
                 generator=generator
@@ -110,12 +136,10 @@ def handler(job):
         
         logging.info("Image generated. Uploading to S3...")
         
-        # 이미지를 메모리 내 버퍼에 저장
         buffer = io.BytesIO()
         image.save(buffer, format="PNG")
-        buffer.seek(0) # 버퍼의 포인터를 처음으로 되돌림
+        buffer.seek(0)
         
-        # S3에 업로드
         s3_client = boto3.client('s3', region_name=AWS_REGION)
         file_key = f"images/{uuid.uuid4()}.png"
         
@@ -132,11 +156,11 @@ def handler(job):
         
         return {
             "image_url": image_url,
-            "image_prompt": prompt
+            "image_prompt": positive_prompt
         }
 
     except NoCredentialsError:
-        error_msg = "S3 credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables."
+        error_msg = "S3 credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY."
         logging.error(error_msg)
         return {"error": error_msg}
     except Exception as e:
