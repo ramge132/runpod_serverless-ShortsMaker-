@@ -113,7 +113,7 @@ def create_prompts(input_data):
         for char in characters:
             name = char.get('name', 'person')
             gender = gender_map.get(char.get('gender'), "")
-            desc = char.get('description', '')
+            desc = translate_to_english(char.get('description', '')) # 영어로 번역
             character_descriptions.append(f"{name} as a {gender} ({desc})")
         
         scene_descriptions = []
