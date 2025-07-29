@@ -95,13 +95,12 @@ def translate_to_english(text):
         return text # 번역 실패 시 원본 텍스트 반환
 
 def create_prompts(input_data):
-    """입력 데이터로부터 Positive 및 Negative 프롬프트를 생성합니다."""
+    """입력 데이터로부터 Positive 프롬프트를 생성합니다."""
     # Backend에서 생성된 프롬프트를 직접 사용
     positive_prompt = input_data.get('image_prompt', '')
     
     # 품질 관련 태그는 유지
     positive_quality_tags = "masterpiece, best quality, ultra-detailed, 8k, photorealistic, cinematic lighting"
-    negative_quality_tags = "ugly, deformed, noisy, blurry, distorted, low quality, bad anatomy, worst quality, watermark, text, signature"
 
     # 만약 Backend에서 프롬프트를 전달하지 않았을 경우, 기존 방식으로 프롬프트 생성 (하위 호환성)
     if not positive_prompt:
@@ -132,7 +131,7 @@ def create_prompts(input_data):
 
     final_positive_prompt = f"{positive_quality_tags}, {positive_prompt}"
     
-    return final_positive_prompt, negative_quality_tags
+    return final_positive_prompt
 
 def handler(job):
     if initialization_error:
@@ -145,19 +144,18 @@ def handler(job):
         job_input = job['input']
         
         # 개선된 프롬프트 생성 함수 호출
-        positive_prompt, negative_prompt = create_prompts(job_input)
-        logging.info(f"Positive Prompt: {positive_prompt}")
-        logging.info(f"Negative Prompt: {negative_prompt}")
+        positive_prompt = create_prompts(job_input)
+        logging.info(f"--- Final Positive Prompt for Image Generation ---\n{positive_prompt}")
         
         with torch.no_grad():
             generator = torch.Generator("cuda").manual_seed(job_input.get('seed', 42))
             image = pipe(
-                prompt=positive_prompt, 
-                prompt_2=positive_prompt,
-                negative_prompt=negative_prompt,
-                negative_prompt_2=negative_prompt,
-                num_inference_steps=28,
-                guidance_scale=7.0,
+                prompt=positive_prompt,
+                height=1024,
+                width=1024,
+                guidance_scale=3.5,
+                num_inference_steps=50,
+                max_sequence_length=512,
                 generator=generator
             ).images[0]
         
