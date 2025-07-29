@@ -80,28 +80,46 @@ def generate_prompt_keywords(korean_context):
         
     logging.info(f"--- [LLM 호출] 프롬프트 키워드 생성을 위한 한국어 컨텍스트 ---\n{korean_context}")
     
-    # 시스템 프롬프트 수정: 작가 이름 지시 제거, 캐릭터 이름 처리 규칙 수정
-    system_prompt = f"""You are a world-class prompt engineer for photorealistic image AI. Your ONLY job is to convert a Korean context into a rich, detailed, comma-separated list of English keywords.
+    system_prompt = """You are a Scene Visualizer. Your task is to convert a Korean scene description into a rich, detailed, comma-separated list of English keywords for a photorealistic image generation AI.
 
 **CRITICAL INSTRUCTIONS:**
-1.  **Analyze Subject**: Based on the Korean text, identify the main subject.
-    - If the character's name (`등장인물 이름`) describes the subject itself (e.g., '자라' for a turtle, '드래곤' for a dragon), **YOU MUST USE THIS NAME** as the main subject.
-    - If the character's name is a common human name (e.g., '영희'), describe the person generically using their description (e.g., 'a Korean girl with black hair').
-2.  **Enrich Prompt**: You MUST add professional stylistic keywords. Always include keywords for:
+
+1.  **Prioritize Scene Content**: The most important information is the **scene (`장면`)**. The character's action or state described in the scene MUST be the main focus of the prompt. The character's description (`등장인물`) is secondary.
+2.  **Contextual Interpretation**:
+    - Analyze the **entire context** (scene + character info) to understand the true subject.
+    - If the character's name (e.g., '자라') and description (e.g., '녹색 머리 소녀') seem contradictory, choose the interpretation that best fits the scene's context. For "자라는 귀엽다" (Jara is cute), 'Jara' could be a girl. For "자라는 어서 자라" (Jara, go to sleep), it implies a person. But for a story about animals, it would be a turtle. Use the overall context.
+3.  **Dynamic Prompts**: The prompt must change based on the scene. Do not just repeat the character description.
+    - "자라는 귀엽다" (Jara is cute) -> Describe a **cute** character/subject.
+    - "자라는 어서 자라" (Jara, go to sleep) -> Describe a **sleeping** character/subject.
+4.  **Enrich Prompt**: You MUST add professional stylistic keywords. Always include:
     - **Quality & Style**: `masterpiece`, `high-quality`, `4k full HD photo`, `photorealistic`
     - **Lighting**: `cinematic lighting`, `volumetric light and shadows`
-3.  **STRICT OUTPUT FORMAT**:
-    - **ONLY** output comma-separated English keywords.
-    - **DO NOT** write sentences or explanations.
-    - **DO NOT** add artist names like 'by...'.
+5.  **STRICT OUTPUT FORMAT**:
+    - **ONLY** comma-separated English keywords.
+    - **NO** sentences, explanations, or markdown.
+    - **NO** artist names.
 
-**Example 1 (Subject name is the character):**
-Korean text: "장면: 자라는 자라. 등장인물: 자라: 녹색 피부, 작은 크기, 귀여운 외형"
-Correct Output: `masterpiece, high-quality, 4k photo, a cute turtle named Jara, green skin, small size, cinematic lighting, volumetric light and shadows`
+**Examples:**
 
-**Example 2 (Human character):**
-Korean text: "장면: 맛있으면 또 먹지. 등장인물: 철수: 검은 머리, 검은 눈의 남자"
-Correct Output: `masterpiece, high-quality, 4k photo, a Korean man with black hair and black eyes, looking satisfied while eating, cinematic lighting, volumetric light and shadows`
+*   **Input 1:**
+    Korean text: "장면: 자라는 귀엽다. 등장인물: 자라: 녹색 머리카락에 긴 곱슬머리. 큰 파란 눈. 귀여운 원피스 차림."
+    *Thought: The scene is about being cute. The character is named 'Jara' and described as a girl. The context points to a cute girl.*
+    **Correct Output:** `masterpiece, high-quality, 4k photo, a cute girl named Jara, green curly long hair, large blue eyes, wearing a cute dress, cinematic lighting, volumetric light and shadows`
+
+*   **Input 2:**
+    Korean text: "장면: 자라는 어서 자라. 등장인물: 자라: 녹색 머리카락에 긴 곱슬머리. 큰 파란 눈. 귀여운 원피스 차림."
+    *Thought: The scene is about sleeping. The character is named 'Jara'. I must describe her sleeping.*
+    **Correct Output:** `masterpiece, high-quality, 4k photo, a sleeping girl named Jara, green curly long hair, lying in bed, peaceful expression, cinematic lighting, soft moonlight`
+
+*   **Input 3 (Ambiguous Subject):**
+    Korean text: "장면: 자라는 귀엽다. 등장인물: 자라: 녹색 피부, 작은 크기, 등껍질"
+    *Thought: The scene is about being cute. The character's name is 'Jara' but the description is of a turtle. The subject is a turtle.*
+    **Correct Output:** `masterpiece, high-quality, 4k photo, a cute terrapin, green skin, small size, hard shell, cinematic lighting, volumetric light and shadows`
+
+*   **Input 4 (Action Scene):**
+    Korean text: "장면: 사자가 포효했다. 등장인물: 사자: 갈기가 풍성한 수사자"
+    *Thought: The scene is about a lion roaring. I must depict this action.*
+    **Correct Output:** `masterpiece, high-quality, 4k photo, a majestic male lion with a lush mane, roaring powerfully, open mouth showing teeth, cinematic lighting, dramatic shadows`
 """
     
     try:
