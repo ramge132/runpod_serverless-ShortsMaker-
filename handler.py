@@ -74,36 +74,40 @@ except Exception as e:
 
 def create_prompts(input_data):
     """입력 데이터로부터 Positive 및 Negative 프롬프트를 생성합니다."""
-    metadata = input_data.get('story_metadata', {})
-    audios = input_data.get('audios', [])
+    # Backend에서 생성된 프롬프트를 직접 사용
+    positive_prompt = input_data.get('image_prompt', '')
     
-    # --- 품질 및 스타일 키워드 ---
+    # 품질 관련 태그는 유지
     positive_quality_tags = "masterpiece, best quality, ultra-detailed, 8k, photorealistic, cinematic lighting"
     negative_quality_tags = "ugly, deformed, noisy, blurry, distorted, low quality, bad anatomy, worst quality, watermark, text, signature"
 
-    # --- 캐릭터 정보 파싱 ---
-    characters = metadata.get('characters', [])
-    gender_map = {0: "man", 1: "woman"}
-    character_descriptions = []
-    for char in characters:
-        name = char.get('name', 'person')
-        gender = gender_map.get(char.get('gender'), "")
-        desc = char.get('description', '')
-        character_descriptions.append(f"{name} as a {gender} ({desc})")
-    
-    # --- 씬 내용 파싱 ---
-    scene_descriptions = []
-    for audio in audios:
-        text = audio.get('text', '')
-        if audio.get('type') == 'dialogue':
-            char_name = audio.get('character', '')
-            emotion = audio.get('emotion', '')
-            scene_descriptions.append(f"{char_name} is speaking with a {emotion} expression, saying '{text}'")
-        else: # narration
-            scene_descriptions.append(text)
+    # 만약 Backend에서 프롬프트를 전달하지 않았을 경우, 기존 방식으로 프롬프트 생성 (하위 호환성)
+    if not positive_prompt:
+        metadata = input_data.get('story_metadata', {})
+        audios = input_data.get('audios', [])
+        
+        characters = metadata.get('characters', [])
+        gender_map = {0: "man", 1: "woman"}
+        character_descriptions = []
+        for char in characters:
+            name = char.get('name', 'person')
+            gender = gender_map.get(char.get('gender'), "")
+            desc = char.get('description', '')
+            character_descriptions.append(f"{name} as a {gender} ({desc})")
+        
+        scene_descriptions = []
+        for audio in audios:
+            text = audio.get('text', '')
+            if audio.get('type') == 'dialogue':
+                char_name = audio.get('character', '')
+                emotion = audio.get('emotion', '')
+                scene_descriptions.append(f"{char_name} is speaking with a {emotion} expression, saying '{text}'")
+            else: # narration
+                scene_descriptions.append(text)
 
-    # --- 최종 프롬프트 조합 ---
-    final_positive_prompt = f"{positive_quality_tags}, a scene of ({', '.join(character_descriptions)}). {' '.join(scene_descriptions)}"
+        positive_prompt = f"a scene of ({', '.join(character_descriptions)}). {' '.join(scene_descriptions)}"
+
+    final_positive_prompt = f"{positive_quality_tags}, {positive_prompt}"
     
     return final_positive_prompt, negative_quality_tags
 
