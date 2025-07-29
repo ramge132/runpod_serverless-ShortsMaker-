@@ -76,20 +76,27 @@ except Exception as e:
 
 # ------------------------------------
 
-def translate_to_english(text):
+def translate_to_english(text, max_length=None):
     """주어진 텍스트를 영어로 번역합니다."""
     if not text:
         return ""
     try:
+        logging.info(f"--- Translating to English ---\nInput: {text}")
+        user_content = f"Translate the following Korean text to English: {text}"
+        if max_length:
+            user_content += f"\n\nPlease keep the translation concise and under {max_length} characters."
+            
         response = openai_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": "You are a helpful assistant that translates Korean text to English."},
-                {"role": "user", "content": f"Translate the following Korean text to English: {text}"}
+                {"role": "user", "content": user_content}
             ],
             temperature=0.3,
         )
-        return response.choices[0].message.content.strip()
+        translated_text = response.choices[0].message.content.strip()
+        logging.info(f"--- Translation Result ---\nOutput: {translated_text}")
+        return translated_text
     except Exception as e:
         logging.error(f"Error translating text: {e}")
         return text # 번역 실패 시 원본 텍스트 반환
@@ -111,9 +118,9 @@ def create_prompts(input_data):
         gender_map = {0: "man", 1: "woman"}
         character_descriptions = []
         for char in characters:
-            name = char.get('name', 'person')
+            name = translate_to_english(char.get('name', 'person')) # 이름도 번역
             gender = gender_map.get(char.get('gender'), "")
-            desc = translate_to_english(char.get('description', '')) # 영어로 번역
+            desc = translate_to_english(char.get('description', ''), max_length=150) # 글자 수 제한 추가
             character_descriptions.append(f"{name} as a {gender} ({desc})")
         
         scene_descriptions = []
@@ -155,7 +162,6 @@ def handler(job):
                 width=1024,
                 guidance_scale=3.5,
                 num_inference_steps=50,
-                max_sequence_length=512,
                 generator=generator
             ).images[0]
         
