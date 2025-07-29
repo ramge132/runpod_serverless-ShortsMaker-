@@ -87,7 +87,8 @@ def generate_prompt_keywords(korean_context):
 1.  **Prioritize Scene Content**: The most important information is the **scene (`장면`)**. The character's action or state described in the scene MUST be the main focus of the prompt. The character's description (`등장인물`) is secondary.
 2.  **Contextual Interpretation**:
     - Analyze the **entire context** (scene + character info) to understand the true subject.
-    - If the character's name (e.g., '자라') and description (e.g., '녹색 머리 소녀') seem contradictory, choose the interpretation that best fits the scene's context. For "자라는 귀엽다" (Jara is cute), 'Jara' could be a girl. For "자라는 어서 자라" (Jara, go to sleep), it implies a person. But for a story about animals, it would be a turtle. Use the overall context.
+    - If the character's `gender` is `None` or not provided, assume the character is an **animal or object** and describe it based on its name and description.
+    - If `gender` is provided (0 for man, 1 for woman), treat the character as a human.
 3.  **Dynamic Prompts**: The prompt must change based on the scene. Do not just repeat the character description.
     - "자라는 귀엽다" (Jara is cute) -> Describe a **cute** character/subject.
     - "자라는 어서 자라" (Jara, go to sleep) -> Describe a **sleeping** character/subject.
@@ -101,23 +102,18 @@ def generate_prompt_keywords(korean_context):
 
 **Examples:**
 
-*   **Input 1:**
-    Korean text: "장면: 자라는 귀엽다. 등장인물: 자라: 녹색 머리카락에 긴 곱슬머리. 큰 파란 눈. 귀여운 원피스 차림."
-    *Thought: The scene is about being cute. The character is named 'Jara' and described as a girl. The context points to a cute girl.*
-    **Correct Output:** `masterpiece, high-quality, 4k photo, a cute girl named Jara, green curly long hair, large blue eyes, wearing a cute dress, cinematic lighting, volumetric light and shadows`
+*   **Input 1 (Human):**
+    Korean text: "장면: 자라는 귀엽다. 등장인물: 자라: 녹색 머리카락, 큰 파란 눈 (성별: 여자)"
+    *Thought: The scene is about being cute. The character is named 'Jara' and has a gender. It's a girl.*
+    **Correct Output:** `masterpiece, high-quality, 4k photo, a cute girl named Jara, green hair, large blue eyes, cinematic lighting, volumetric light and shadows`
 
-*   **Input 2:**
-    Korean text: "장면: 자라는 어서 자라. 등장인물: 자라: 녹색 머리카락에 긴 곱슬머리. 큰 파란 눈. 귀여운 원피스 차림."
-    *Thought: The scene is about sleeping. The character is named 'Jara'. I must describe her sleeping.*
-    **Correct Output:** `masterpiece, high-quality, 4k photo, a sleeping girl named Jara, green curly long hair, lying in bed, peaceful expression, cinematic lighting, soft moonlight`
+*   **Input 2 (Animal):**
+    Korean text: "장면: 자라는 귀엽다. 등장인물: 자라: 녹색 피부, 등껍질 (성별: 없음)"
+    *Thought: The scene is about being cute. The character's name is 'Jara' and gender is '없음' (None). The description is of a turtle. The subject is a turtle.*
+    **Correct Output:** `masterpiece, high-quality, 4k photo, a cute terrapin, green skin, hard shell, cinematic lighting, volumetric light and shadows`
 
-*   **Input 3 (Ambiguous Subject):**
-    Korean text: "장면: 자라는 귀엽다. 등장인물: 자라: 녹색 피부, 작은 크기, 등껍질"
-    *Thought: The scene is about being cute. The character's name is 'Jara' but the description is of a turtle. The subject is a turtle.*
-    **Correct Output:** `masterpiece, high-quality, 4k photo, a cute terrapin, green skin, small size, hard shell, cinematic lighting, volumetric light and shadows`
-
-*   **Input 4 (Action Scene):**
-    Korean text: "장면: 사자가 포효했다. 등장인물: 사자: 갈기가 풍성한 수사자"
+*   **Input 3 (Action Scene):**
+    Korean text: "장면: 사자가 포효했다. 등장인물: 사자: 갈기가 풍성한 수사자 (성별: 남자)"
     *Thought: The scene is about a lion roaring. I must depict this action.*
     **Correct Output:** `masterpiece, high-quality, 4k photo, a majestic male lion with a lush mane, roaring powerfully, open mouth showing teeth, cinematic lighting, dramatic shadows`
 """
@@ -156,8 +152,10 @@ def create_prompts(input_data):
         char_descs = []
         for char in characters:
             name = char.get('name', '캐릭터')
-            desc = char.get('description', '묘사 없음') 
-            char_descs.append(f"{name}: {desc}") # "이름: 설명" 형식으로 변경
+            desc = char.get('description', '묘사 없음')
+            gender = char.get('gender')
+            gender_text = f" (성별: {'남자' if gender == 0 else '여자' if gender == 1 else '없음'})"
+            char_descs.append(f"{name}: {desc}{gender_text}")
         character_info_kr = f"등장인물: {', '.join(char_descs)}"
 
     full_korean_context = f"장면: {scene_text}. {character_info_kr}".strip()
