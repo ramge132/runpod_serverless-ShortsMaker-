@@ -12,9 +12,13 @@ import gc
 import uuid
 import boto3
 from botocore.exceptions import NoCredentialsError
+from openai import OpenAI
 
 # --- 로깅 설정 ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# --- OpenAI 클라이언트 초기화 ---
+openai_client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 # --- 전역 변수 및 초기화 ---
 initialization_error = None
@@ -72,6 +76,24 @@ except Exception as e:
 
 # ------------------------------------
 
+def translate_to_english(text):
+    """주어진 텍스트를 영어로 번역합니다."""
+    if not text:
+        return ""
+    try:
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant that translates Korean text to English."},
+                {"role": "user", "content": f"Translate the following Korean text to English: {text}"}
+            ],
+            temperature=0.3,
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        logging.error(f"Error translating text: {e}")
+        return text # 번역 실패 시 원본 텍스트 반환
+
 def create_prompts(input_data):
     """입력 데이터로부터 Positive 및 Negative 프롬프트를 생성합니다."""
     # Backend에서 생성된 프롬프트를 직접 사용
@@ -98,12 +120,13 @@ def create_prompts(input_data):
         scene_descriptions = []
         for audio in audios:
             text = audio.get('text', '')
+            translated_text = translate_to_english(text) # 영어로 번역
             if audio.get('type') == 'dialogue':
                 char_name = audio.get('character', '')
                 emotion = audio.get('emotion', '')
-                scene_descriptions.append(f"{char_name} is speaking with a {emotion} expression, saying '{text}'")
+                scene_descriptions.append(f"{char_name} is speaking with a {emotion} expression, saying '{translated_text}'")
             else: # narration
-                scene_descriptions.append(text)
+                scene_descriptions.append(translated_text)
 
         positive_prompt = f"a scene of ({', '.join(character_descriptions)}). {' '.join(scene_descriptions)}"
 
